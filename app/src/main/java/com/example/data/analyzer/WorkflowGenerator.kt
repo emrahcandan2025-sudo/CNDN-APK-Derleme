@@ -58,14 +58,22 @@ object WorkflowGenerator {
                       java-version: '$javaVersion'
                       cache: 'gradle'
 
-                  - name: Gradle Wrapper Yetkilendirmesi
+                  - name: Gradle Wrapper Yetkilendirmesi ve Sürüm Uyumu
                     run: |
                       if [ -f "gradlew" ]; then
                         chmod +x gradlew
                       else
                         echo "gradlew bulunamadı, fallback gradle wrapper oluşturuluyor"
-                        gradle wrapper || true
+                        gradle wrapper --gradle-version 9.3.1 || true
                         chmod +x gradlew || true
+                      fi
+                      WRAPPER_PROP="gradle/wrapper/gradle-wrapper.properties"
+                      if [ -f "${'$'}WRAPPER_PROP" ]; then
+                        if grep -rq "9\.1\." gradle/libs.versions.toml app/build.gradle* build.gradle* 2>/dev/null; then
+                          echo "AGP 9.x tespit edildi. Gradle sürümü 9.3.1 olarak ayarlanıyor..."
+                          sed -i 's/gradle-[0-8]\.[0-9.]*-bin\.zip/gradle-9.3.1-bin.zip/g' "${'$'}WRAPPER_PROP" || true
+                          sed -i 's/gradle-9\.[0-2]\.[0-9.]*-bin\.zip/gradle-9.3.1-bin.zip/g' "${'$'}WRAPPER_PROP" || true
+                        fi
                       fi
 
                   - name: Android Projesini Derle (${target.gradleCommand})

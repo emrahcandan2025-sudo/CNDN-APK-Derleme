@@ -269,13 +269,20 @@ object ZipProjectAnalyzer {
                 """
                 distributionBase=GRADLE_USER_HOME
                 distributionPath=wrapper/dists
-                distributionUrl=https\://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+                distributionUrl=https\://services.gradle.org/distributions/gradle-9.3.1-bin.zip
                 networkTimeout=10000
                 validateDistributionUrl=true
                 zipStoreBase=GRADLE_USER_HOME
                 zipStorePath=wrapper/dists
                 """.trimIndent()
             )
+        } else {
+            // If existing wrapper is older than 9.3.1 (e.g. 8.11.1) and AGP 9.x is used, upgrade it
+            val content = propsFile.readText()
+            if (content.contains("gradle-8.") || content.contains("gradle-7.")) {
+                val upgraded = content.replace(Regex("gradle-[0-8]\\.[0-9.]+-bin\\.zip"), "gradle-9.3.1-bin.zip")
+                propsFile.writeText(upgraded)
+            }
         }
 
         val gradlewFile = File(projectDir, "gradlew")

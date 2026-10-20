@@ -76,6 +76,26 @@ class BuildLogAnalyzerTest {
     }
 
     @Test
+    fun `test AGP minimum Gradle version mismatch categorization`() {
+        val sampleLog = """
+            FAILURE: Build failed with an exception.
+            * Where:
+            Build file '/home/runner/work/app/build.gradle.kts' line: 3
+            * What went wrong:
+            An exception occurred applying plugin request [id: 'com.android.application', version: '9.1.1']
+            > Failed to apply plugin 'com.android.internal.version-check'.
+               > Minimum supported Gradle version is 9.3.1. Current version is 8.11.1.
+                 Try updating the 'distributionUrl' property in gradle/wrapper/gradle-wrapper.properties to 'gradle-9.3.1-bin.zip'.
+        """.trimIndent()
+
+        val diag = BuildLogAnalyzer.analyze(sampleLog, "Android Projesini Derle")
+
+        assertEquals(DiagnosticCategory.SDK_VERSION_ERROR, diag.category)
+        assertTrue(diag.primaryErrorMessage.contains("Minimum supported Gradle version is"))
+        assertTrue(diag.suggestedFix.contains("gradle-9.3.1-bin.zip"))
+    }
+
+    @Test
     fun `test secret token masking in logs`() {
         val rawLog = "Triggered by user with token ghp_1234567890abcdef1234567890 and Bearer github_pat_11AAAAAA22BBBBBB33CCCCCC44"
         val sanitized = BuildLogAnalyzer.sanitizeLogs(rawLog)

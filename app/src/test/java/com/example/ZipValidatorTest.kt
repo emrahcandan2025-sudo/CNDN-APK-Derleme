@@ -111,7 +111,7 @@ class ZipValidatorTest {
 
         assertTrue("gradlew dosyası oluşturulmalı", gradlew.exists())
         assertTrue("gradle-wrapper.properties oluşturulmalı", props.exists())
-        assertTrue(props.readText().contains("gradle-8.11.1"))
+        assertTrue(props.readText().contains("gradle-9.3.1"))
     }
 
     private fun createZipBytes(entries: Map<String, String>): ByteArray {

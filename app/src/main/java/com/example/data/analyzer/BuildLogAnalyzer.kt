@@ -34,7 +34,22 @@ object BuildLogAnalyzer {
         val sanitized = sanitizeLogs(rawLogs)
         val lines = sanitized.lines()
 
-        // 1. Check for Gradle Syntax / DSL errors
+        // 1. Check for AGP / Gradle Version Mismatch (e.g. Minimum supported Gradle version is 9.3.1)
+        val gradleVersionMismatch = lines.find { it.contains("Minimum supported Gradle version is") }
+            ?: lines.find { it.contains("Failed to apply plugin 'com.android.internal.version-check'") }
+        if (gradleVersionMismatch != null) {
+            val details = extractErrorWindow(lines, gradleVersionMismatch)
+            val suggestedVersion = Regex("to ['\"](gradle-[0-9.]+-bin\\.zip)['\"]").find(sanitized)?.groupValues?.get(1) ?: "gradle-9.3.1-bin.zip"
+            return BuildDiagnostic(
+                category = DiagnosticCategory.SDK_VERSION_ERROR,
+                failedStepName = failedStepName,
+                primaryErrorMessage = gradleVersionMismatch.trim(),
+                suggestedFix = "Android Gradle Eklentisi (AGP) daha yüksek bir Gradle sürümü gerektiriyor. 'gradle/wrapper/gradle-wrapper.properties' dosyasındaki 'distributionUrl' adresini '$suggestedVersion' olarak güncelleyin.",
+                detailedLogSnippet = details
+            )
+        }
+
+        // 2. Check for Gradle Syntax / DSL errors
         val dslError = lines.find {
             it.contains("Script compilation error") ||
             it.contains("Unresolved reference") && (it.contains(".gradle.kts") || it.contains("build.gradle")) ||
@@ -90,7 +105,7 @@ object BuildLogAnalyzer {
             )
         }
 
-        // 4. Check for SDK / Java Version Incompatibility
+        // 5. Check for SDK / Java Version Incompatibility
         val sdkError = lines.find {
             it.contains("Unsupported class file major version") ||
             it.contains("has been compiled by a more recent version of the Java Runtime") ||
