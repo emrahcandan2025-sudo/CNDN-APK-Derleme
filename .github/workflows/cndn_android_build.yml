@@ -1,0 +1,98 @@
+name: CNDN Android APK & AAB Derleme
+
+on:
+  push:
+    branches: [ main, master, 'cndn/**', 'release/**' ]
+  workflow_dispatch:
+    inputs:
+      build_target:
+        description: 'Derleme Hedefi'
+        required: true
+        default: 'assembleDebug'
+        type: choice
+        options:
+          - assembleDebug
+          - assembleRelease
+          - bundleRelease
+      java_version:
+        description: 'Java JDK Sürümü'
+        required: true
+        default: '17'
+        type: choice
+        options:
+          - '17'
+          - '21'
+
+concurrency:
+  group: cndn-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: CNDN Android Derleme
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Kaynak Kodunu İndir (Checkout)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Java JDK ${{ inputs.java_version || '17' }} Kurulumu
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ inputs.java_version || '17' }}
+          cache: 'gradle'
+
+      - name: Gradle Wrapper İzinlerini Ayarla
+        run: |
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+          else
+            echo "UYARI: gradlew bulunamadı, fallback Gradle Wrapper oluşturuluyor..."
+            gradle wrapper --gradle-version 8.11.1 || true
+            chmod +x gradlew || true
+          fi
+
+      - name: Android Projesini Derle (${{ inputs.build_target || 'assembleDebug' }})
+        id: gradle_build
+        run: |
+          TARGET="${{ inputs.build_target || 'assembleDebug' }}"
+          echo "Başlatılan Gradle görevi: ./gradlew $TARGET"
+          ./gradlew $TARGET --stacktrace --no-daemon
+
+      - name: Derleme Çıktılarını Kontrol Et
+        if: success()
+        run: |
+          echo "=== Derlenen APK / AAB Dosyaları ==="
+          ls -la app/build/outputs/apk/*/*.apk 2>/dev/null || true
+          ls -la app/build/outputs/bundle/*/*.aab 2>/dev/null || true
+
+      - name: Debug APK Artefaktını Yükle
+        if: success() && (inputs.build_target == 'assembleDebug' || inputs.build_target == '' || !inputs.build_target)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cndn-apk-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Release APK Artefaktını Yükle
+        if: success() && inputs.build_target == 'assembleRelease'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cndn-apk-release
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: App Bundle (AAB) Artefaktını Yükle
+        if: success() && inputs.build_target == 'bundleRelease'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cndn-aab-release
+          path: app/build/outputs/bundle/release/*.aab
+          retention-days: 14
+          if-no-files-found: warn

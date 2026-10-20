@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -337,6 +340,70 @@ fun SettingsScreen(
                                 color = CndnTextSecondary,
                                 fontSize = 12.sp,
                                 lineHeight = 16.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            // SECTION: BUILD YML VIEW & COPY
+            item {
+                Spacer(modifier = Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "GİTHUB ACTIONS BUILD.YML",
+                        color = CndnTextMuted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    TextButton(
+                        onClick = {
+                            val yaml = com.example.data.analyzer.WorkflowGenerator.generateWorkflowYaml()
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Build YML", yaml))
+                            Toast.makeText(context, "build.yml panoya kopyalandı", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, tint = CndnCyan, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Kopyala", color = CndnCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = CndnSurface),
+                    shape = RoundedCornerShape(14.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CndnBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "Dosya Yolu: .github/workflows/cndn_android_build.yml",
+                            color = CndnTextSecondary,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 200.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CndnSurfaceVariant)
+                                .padding(10.dp)
+                        ) {
+                            Text(
+                                text = com.example.data.analyzer.WorkflowGenerator.generateWorkflowYaml(),
+                                color = CndnCyan,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                lineHeight = 14.sp
                             )
                         }
                     }
