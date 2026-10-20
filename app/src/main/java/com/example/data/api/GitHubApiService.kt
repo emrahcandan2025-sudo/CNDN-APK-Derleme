@@ -162,11 +162,15 @@ object GitHubApiClient {
         .addInterceptor(loggingInterceptor)
         .build()
 
+    private val moshi = com.squareup.moshi.Moshi.Builder()
+        .addLast(com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory())
+        .build()
+
     val apiService: GitHubApiService by lazy {
         Retrofit.Builder()
             .baseUrl(BASE_URL)
             .client(okHttpClient)
-            .addConverterFactory(MoshiConverterFactory.create())
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
             .create(GitHubApiService::class.java)
     }

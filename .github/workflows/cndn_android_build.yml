@@ -72,7 +72,7 @@ jobs:
         run: |
           TARGET="${{ inputs.build_target || 'assembleDebug' }}"
           echo "Başlatılan Gradle görevi: ./gradlew $TARGET"
-          ./gradlew $TARGET --stacktrace --no-daemon
+          ./gradlew $TARGET -Djava.awt.headless=true --stacktrace --no-daemon
 
       - name: Derleme Çıktılarını Kontrol Et
         if: success()

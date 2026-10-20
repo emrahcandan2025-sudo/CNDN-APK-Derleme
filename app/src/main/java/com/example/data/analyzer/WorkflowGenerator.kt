@@ -79,7 +79,7 @@ object WorkflowGenerator {
                   - name: Android Projesini Derle (${target.gradleCommand})
                     id: gradle_build
                     run: |
-                      ./gradlew ${target.gradleCommand} --stacktrace --no-daemon
+                      ./gradlew ${target.gradleCommand} -Djava.awt.headless=true --stacktrace --no-daemon
 
                   - name: Derleme Çıktısını Kontrol Et
                     if: success()

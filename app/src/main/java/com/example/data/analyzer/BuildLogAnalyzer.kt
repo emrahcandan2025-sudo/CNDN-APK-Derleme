@@ -49,7 +49,23 @@ object BuildLogAnalyzer {
             )
         }
 
-        // 2. Check for Gradle Syntax / DSL errors
+        // 2. Check for KSP / IntelliJ AWT EventQueue Headless issue
+        val awtError = lines.find {
+            it.contains("AWT-EventQueue-0") ||
+            it.contains("Cannot invoke \"ksp.com.intellij.openapi.application.Application.getService")
+        }
+        if (awtError != null) {
+            val details = extractErrorWindow(lines, awtError)
+            return BuildDiagnostic(
+                category = DiagnosticCategory.COMPILATION_ERROR,
+                failedStepName = failedStepName,
+                primaryErrorMessage = "KSP / AWT-EventQueue headless ortam hatası: IntelliJ AWT servisi başlatılamadı.",
+                suggestedFix = "Linux sunucularda KSP (Kotlin Symbol Processing) çalıştırılırken 'gradle.properties' dosyasına 'org.gradle.jvmargs=-Xmx4g -Djava.awt.headless=true' parametresi eklenmeli ve Moshi için runtime KotlinJsonAdapterFactory tercih edilmelidir.",
+                detailedLogSnippet = details
+            )
+        }
+
+        // 3. Check for Gradle Syntax / DSL errors
         val dslError = lines.find {
             it.contains("Script compilation error") ||
             it.contains("Unresolved reference") && (it.contains(".gradle.kts") || it.contains("build.gradle")) ||
