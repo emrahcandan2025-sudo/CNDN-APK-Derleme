@@ -1,0 +1,6 @@
+{
+  "name": "CNDN APK Derleme Merkezi",
+  "description": "Android projeleri için GitHub Actions entegrasyonlu yerel APK ve AAB derleme merkezi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
