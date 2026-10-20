@@ -67,6 +67,19 @@ jobs:
             fi
           fi
 
+      - name: Debug Keystore Hazırla
+        run: |
+          if [ ! -f "debug.keystore" ]; then
+            if [ -f "debug.keystore.base64" ]; then
+              echo "debug.keystore.base64 dosyasından debug.keystore oluşturuluyor..."
+              base64 -d debug.keystore.base64 > debug.keystore
+            else
+              echo "keytool ile standart debug.keystore oluşturuluyor..."
+              keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            fi
+          fi
+          ls -la debug.keystore || true
+
       - name: Android Projesini Derle (${{ inputs.build_target || 'assembleDebug' }})
         id: gradle_build
         run: |

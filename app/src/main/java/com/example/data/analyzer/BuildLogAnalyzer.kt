@@ -65,7 +65,24 @@ object BuildLogAnalyzer {
             )
         }
 
-        // 3. Check for Gradle Syntax / DSL errors
+        // 3. Check for Missing Keystore / validateSigningDebug
+        val signingError = lines.find {
+            it.contains("validateSigningDebug FAILED") ||
+            (it.contains("debug.keystore") && it.contains("does not exist")) ||
+            (it.contains("Keystore file") && it.contains("not found"))
+        }
+        if (signingError != null) {
+            val details = extractErrorWindow(lines, signingError)
+            return BuildDiagnostic(
+                category = DiagnosticCategory.PERMISSION_DENIED,
+                failedStepName = "İmza Doğrulama (validateSigningDebug)",
+                primaryErrorMessage = "debug.keystore dosyası GitHub Actions sunucusunda bulunamadı.",
+                suggestedFix = "Projenizdeki 'debug.keystore' dosyası gitignore edildiği için GitHub'a yüklenemedi. GitHub Actions iş akışınıza 'Debug Keystore Hazırla' adımını ekleyerek keytool ile otomatik oluşturulmasını sağlayın.",
+                detailedLogSnippet = details
+            )
+        }
+
+        // 4. Check for Gradle Syntax / DSL errors
         val dslError = lines.find {
             it.contains("Script compilation error") ||
             it.contains("Unresolved reference") && (it.contains(".gradle.kts") || it.contains("build.gradle")) ||
