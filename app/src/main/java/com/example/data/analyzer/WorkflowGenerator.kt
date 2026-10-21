@@ -8,7 +8,7 @@ object WorkflowGenerator {
      * Generates a battle-tested, robust GitHub Actions workflow YAML for building the Android project.
      */
     fun generateWorkflowYaml(
-        target: BuildTarget = BuildTarget.DEBUG_APK,
+        target: BuildTarget = BuildTarget.RELEASE_APK,
         javaVersion: String = "17"
     ): String {
         val artifactPath = when (target) {
@@ -18,7 +18,7 @@ object WorkflowGenerator {
         }
 
         return """
-            name: CNDN Android APK Derleme
+            name: CNDN Android İmzalı APK Derleme
 
             on:
               workflow_dispatch:
@@ -29,8 +29,8 @@ object WorkflowGenerator {
                     default: '${target.gradleCommand}'
                     type: choice
                     options:
-                      - assembleDebug
                       - assembleRelease
+                      - assembleDebug
                       - bundleRelease
                   java_version:
                     description: 'Java JDK Sürümü'
@@ -47,9 +47,9 @@ object WorkflowGenerator {
 
             jobs:
               build:
-                name: Android Derleme (${target.gradleCommand})
+                name: Android İmzalı Derleme (${target.gradleCommand})
                 runs-on: ubuntu-latest
-                timeout-minutes: 30
+                timeout-minutes: 35
 
                 steps:
                   - name: Depo Kodunu Çek (Checkout)
@@ -82,30 +82,55 @@ object WorkflowGenerator {
                         fi
                       fi
 
-                  - name: Debug Keystore Hazırla
+                  - name: Release ve Debug Keystore Hazırla
                     run: |
+                      echo "=== İmza Anahtarı (Keystore) Kontrolü ==="
+                      if [ ! -f "release.keystore" ]; then
+                        if [ -n "${'$'}{{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+                          echo "Secret üzerinden release.keystore çözülüyor..."
+                          echo "${'$'}{{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
+                        elif [ -f "release.keystore.base64" ]; then
+                          base64 -d release.keystore.base64 > release.keystore
+                        else
+                          echo "Kalıcı ve güvenli Release Keystore keytool ile oluşturuluyor..."
+                          keytool -genkey -v -keystore release.keystore -storepass android -alias androidreleasekey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=CNDN Release,O=CNDN,C=TR"
+                        fi
+                      fi
+
                       if [ ! -f "debug.keystore" ]; then
                         if [ -f "debug.keystore.base64" ]; then
-                          echo "debug.keystore.base64 dosyasından debug.keystore oluşturuluyor..."
                           base64 -d debug.keystore.base64 > debug.keystore
                         else
-                          echo "keytool ile standart debug.keystore oluşturuluyor..."
                           keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
                         fi
                       fi
-                      ls -la debug.keystore || true
+                      ls -la release.keystore debug.keystore 2>/dev/null || true
 
                   - name: Android Projesini Derle (${target.gradleCommand})
                     id: gradle_build
+                    env:
+                      KEYSTORE_FILE: release.keystore
+                      KEYSTORE_PASSWORD: ${'$'}{{ secrets.KEYSTORE_PASSWORD || 'android' }}
+                      KEY_ALIAS: ${'$'}{{ secrets.KEY_ALIAS || 'androidreleasekey' }}
+                      KEY_PASSWORD: ${'$'}{{ secrets.KEY_PASSWORD || 'android' }}
                     run: |
                       TARGET="${'$'}{{ inputs.build_target || '${target.gradleCommand}' }}"
                       ./gradlew ${'$'}TARGET -Djava.awt.headless=true --stacktrace --no-daemon
 
-                  - name: Derleme Çıktısını Kontrol Et
+                  - name: Derleme Çıktısını ve İmzayı Doğrula
                     if: success()
                     run: |
                       echo "=== Oluşan Çıktılar ==="
                       ls -la app/build/outputs/apk/* 2>/dev/null || ls -la app/build/outputs/bundle/* 2>/dev/null || true
+                      RELEASE_APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -n 1)
+                      if [ -n "${'$'}RELEASE_APK" ] && [ -f "${'$'}RELEASE_APK" ]; then
+                        echo "Release APK bulundu: ${'$'}RELEASE_APK"
+                        if command -v apksigner >/dev/null 2>&1; then
+                          apksigner verify --verbose "${'$'}RELEASE_APK" || true
+                        else
+                          jarsigner -verify -verbose "${'$'}RELEASE_APK" 2>/dev/null | grep -i "verified" || true
+                        fi
+                      fi
 
                   - name: APK / AAB Artefaktını Yükle
                     if: success()

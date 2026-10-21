@@ -19,7 +19,14 @@ data class ProjectInspectionResult(
     val detectedModules: List<String> = emptyList(),
     val appName: String? = null,
     val applicationId: String? = null,
+    val versionName: String? = null,
+    val versionCode: String? = null,
     val compileSdkVersion: String? = null,
+    val isKotlinDsl: Boolean = false,
+    val agpVersion: String? = null,
+    val gradleVersion: String? = null,
+    val hasReleaseSigningConfig: Boolean = false,
+    val signingMessage: String? = null,
     val containsSuspiciousPaths: Boolean = false,
     val filesList: List<ProjectFileInfo> = emptyList()
 )

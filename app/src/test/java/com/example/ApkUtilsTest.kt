@@ -67,4 +67,36 @@ class ApkUtilsTest {
         assertEquals(64, hash.length)
         assertTrue(hash.matches(Regex("^[a-f0-9]{64}$")))
     }
+
+    @Test
+    fun `test verifyApkSignature detects v1 signed APK`() {
+        val signedApk = tempFolder.newFile("signed_v1.apk")
+        ZipOutputStream(FileOutputStream(signedApk)).use { zos ->
+            zos.putNextEntry(ZipEntry("AndroidManifest.xml"))
+            zos.write("manifest".toByteArray())
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("META-INF/CERT.RSA"))
+            zos.write("mock_signature".toByteArray())
+            zos.closeEntry()
+        }
+
+        val sigInfo = ApkUtils.verifyApkSignature(null, signedApk)
+        assertTrue("Must detect v1 signature", sigInfo.isSigned)
+        assertTrue("Scheme should mention v1", sigInfo.scheme.contains("v1"))
+    }
+
+    @Test
+    fun `test verifyApkSignature detects unsigned APK`() {
+        val unsignedApk = tempFolder.newFile("unsigned.apk")
+        ZipOutputStream(FileOutputStream(unsignedApk)).use { zos ->
+            zos.putNextEntry(ZipEntry("classes.dex"))
+            zos.write("dex".toByteArray())
+            zos.closeEntry()
+        }
+
+        val sigInfo = ApkUtils.verifyApkSignature(null, unsignedApk)
+        assertFalse("Unsigned APK should not be marked as signed", sigInfo.isSigned)
+        assertEquals("İmzasız", sigInfo.scheme)
+    }
 }

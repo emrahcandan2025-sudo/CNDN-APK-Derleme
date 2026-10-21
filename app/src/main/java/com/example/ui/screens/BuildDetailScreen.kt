@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -62,7 +63,7 @@ fun BuildDetailScreen(
     }.getOrDefault(BuildStatusState.QUEUED)
 
     val dateFormatted = remember(build?.createdAt) {
-        val sdf = SimpleDateFormat("dd MMMM yyyy HH:mm:ss", Locale("tr"))
+        val sdf = SimpleDateFormat("dd MMMM yyyy HH:mm:ss", Locale.forLanguageTag("tr"))
         if (build != null) sdf.format(Date(build.createdAt)) else ""
     }
 
@@ -79,7 +80,7 @@ fun BuildDetailScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Geri", tint = CndnTextPrimary)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Geri", tint = CndnTextPrimary)
                     }
                 },
                 actions = {
@@ -167,8 +168,29 @@ fun BuildDetailScreen(
                             Spacer(modifier = Modifier.height(12.dp))
 
                             InfoRow(
+                                label = "Proje Adı",
+                                value = build.appName ?: build.repoFullName
+                            )
+                            if (!build.packageName.isNullOrBlank()) {
+                                InfoRow(
+                                    label = "Paket Adı",
+                                    value = build.packageName,
+                                    isMonospace = true
+                                )
+                            }
+                            if (!build.versionName.isNullOrBlank()) {
+                                InfoRow(
+                                    label = "Sürüm",
+                                    value = "v${build.versionName}${if (!build.versionCode.isNullOrBlank()) " (${build.versionCode})" else ""}"
+                                )
+                            }
+                            InfoRow(
+                                label = "İmza Durumu",
+                                value = if (build.isSignatureVerified) "Doğrulandı (${build.signatureScheme ?: "Release İmzalı"})" else (build.signatureScheme ?: "İmzalı Release APK")
+                            )
+                            InfoRow(
                                 label = "Artefakt Adı",
-                                value = build.artifactName ?: "cndn-apk-debug.zip"
+                                value = build.artifactName ?: "cndn-apk-release.zip"
                             )
                             if (build.artifactSize != null && build.artifactSize > 0) {
                                 InfoRow(
@@ -177,6 +199,13 @@ fun BuildDetailScreen(
                                 )
                             }
                             InfoRow(label = "Derleme Tarihi", value = dateFormatted)
+                            if (build.workflowRunId > 0) {
+                                InfoRow(
+                                    label = "Actions Run ID",
+                                    value = "#${build.workflowRunId}",
+                                    isMonospace = true
+                                )
+                            }
                             InfoRow(
                                 label = "Commit SHA",
                                 value = build.commitSha.take(8),
@@ -426,10 +455,10 @@ fun BuildDetailScreen(
                                     modifier = Modifier.padding(10.dp),
                                     verticalAlignment = Alignment.Top
                                 ) {
-                                    Icon(Icons.Default.Info, contentDescription = null, tint = CndnCyan, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = CndnEmerald, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Debug APK doğrudan test amacıyla Android cihazlara kurulabilir. Google Play Store yüklemeleri için Release APK imza anahtarı (keystore) gereklidir.",
+                                        text = "Bu APK, CNDN Akıllı İmzalı APK Sistemi tarafından güvenli keystore ile imzalanmıştır. Android telefonlara doğrudan kurulabilir ve mağaza dağıtımına hazırdır.",
                                         color = CndnTextSecondary,
                                         fontSize = 11.sp,
                                         lineHeight = 16.sp

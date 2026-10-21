@@ -77,6 +77,128 @@ object ApkUtils {
     }
 
     /**
+     * Data class holding APK signature verification details.
+     */
+    data class ApkSignatureInfo(
+        val isSigned: Boolean,
+        val scheme: String,
+        val packageName: String? = null,
+        val versionName: String? = null,
+        val versionCode: Long? = null,
+        val details: String = ""
+    )
+
+    /**
+     * Rigorously verifies whether an APK is signed with v1 (JAR signing) and/or v2/v3 (APK Signature Scheme).
+     * Also extracts package and version metadata from the APK using PackageManager when context is available.
+     */
+    fun verifyApkSignature(context: Context?, file: File): ApkSignatureInfo {
+        if (!file.exists() || !file.isFile || file.length() == 0L) {
+            return ApkSignatureInfo(
+                isSigned = false,
+                scheme = "Yok",
+                details = "APK dosyası bulunamadı veya boş."
+            )
+        }
+
+        var hasV1 = false
+        var hasV2 = false
+        var certName: String? = null
+
+        // 1. Check v1 Signature entries inside META-INF
+        try {
+            ZipFile(file).use { zip ->
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    val name = entry.name.uppercase()
+                    if (name.startsWith("META-INF/") && (name.endsWith(".RSA") || name.endsWith(".DSA") || name.endsWith(".EC"))) {
+                        hasV1 = true
+                        certName = entry.name
+                        break
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+
+        // 2. Check v2/v3 Signing Block magic string "APK Sig Block 42"
+        try {
+            FileInputStream(file).use { fis ->
+                val buffer = ByteArray(64 * 1024)
+                var bytesRead: Int
+                val targetMagic = "APK Sig Block 42".toByteArray(Charsets.US_ASCII)
+                while (fis.read(buffer).also { bytesRead = it } != -1) {
+                    if (bytesRead >= targetMagic.size) {
+                        for (i in 0..(bytesRead - targetMagic.size)) {
+                            var match = true
+                            for (j in targetMagic.indices) {
+                                if (buffer[i + j] != targetMagic[j]) {
+                                    match = false
+                                    break
+                                }
+                            }
+                            if (match) {
+                                hasV2 = true
+                                break
+                            }
+                        }
+                    }
+                    if (hasV2) break
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+
+        // 3. Extract Package Metadata via PackageManager if available
+        var pkgName: String? = null
+        var verName: String? = null
+        var verCode: Long? = null
+        if (context != null) {
+            try {
+                val pkgInfo = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+                if (pkgInfo != null) {
+                    pkgName = pkgInfo.packageName
+                    verName = pkgInfo.versionName
+                    verCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        pkgInfo.longVersionCode
+                    } else {
+                        @Suppress("DEPRECATION")
+                        pkgInfo.versionCode.toLong()
+                    }
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+
+        val isSigned = hasV1 || hasV2
+        val scheme = when {
+            hasV1 && hasV2 -> "v1 + v2 (Çift İmza)"
+            hasV2 -> "v2 (APK Signature Scheme)"
+            hasV1 -> "v1 (JAR İmzası)"
+            else -> "İmzasız"
+        }
+
+        val details = if (isSigned) {
+            "İmza doğrulandı ($scheme)${if (certName != null) " • Sertifika: $certName" else ""}"
+        } else {
+            "APK geçerli bir dijital imza içermiyor."
+        }
+
+        return ApkSignatureInfo(
+            isSigned = isSigned,
+            scheme = scheme,
+            packageName = pkgName,
+            versionName = verName,
+            versionCode = verCode,
+            details = details
+        )
+    }
+
+    /**
      * Checks if the app has permission to install unknown apps on Android 8.0+ (Oreo).
      */
     fun canRequestPackageInstalls(context: Context): Boolean {

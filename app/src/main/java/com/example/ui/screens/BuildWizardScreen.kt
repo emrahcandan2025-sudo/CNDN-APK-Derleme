@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
@@ -61,9 +62,9 @@ fun BuildWizardScreen(
     var newRepoDesc by remember { mutableStateOf("CNDN APK Derleme Merkezi tarafından otomatik oluşturuldu.") }
     var newRepoIsPrivate by remember { mutableStateOf(true) }
 
-    // Build target & commit message
-    var selectedTarget by remember { mutableStateOf(BuildTarget.DEBUG_APK) }
-    var commitMessage by remember { mutableStateOf("CNDN APK Derleme: Otomatik kaynak kodu commit") }
+    // Single build target: İmzalı Release APK
+    val selectedTarget = BuildTarget.RELEASE_APK
+    var commitMessage by remember { mutableStateOf("CNDN APK Derleme: İmzalı Release APK commit") }
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
@@ -100,7 +101,7 @@ fun BuildWizardScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Geri", tint = CndnTextPrimary)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Geri", tint = CndnTextPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = CndnBackground)
@@ -236,15 +237,47 @@ fun BuildWizardScreen(
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "Paket Adı: ${result.applicationId} • compileSdk: ${result.compileSdkVersion}",
+                                    text = "Paket: ${result.applicationId} • Sürüm: ${result.versionName} (${result.versionCode}) • compileSdk: ${result.compileSdkVersion}",
                                     color = CndnTextSecondary,
                                     fontSize = 12.sp
+                                )
+                                Text(
+                                    text = "Yapı: ${if (result.isKotlinDsl) "Kotlin DSL (.kts)" else "Groovy DSL (.gradle)"} • AGP: ${result.agpVersion ?: "Standart"} • Gradle: ${result.gradleVersion ?: "9.3.1"}",
+                                    color = CndnTextSecondary,
+                                    fontSize = 11.sp
                                 )
                                 Text(
                                     text = "${result.totalFiles} dosya (${ApkUtils.formatFileSize(result.totalSizeBytes)}) • Modüller: ${result.detectedModules.joinToString()}",
                                     color = CndnTextMuted,
                                     fontSize = 11.sp
                                 )
+
+                                if (!result.signingMessage.isNullOrBlank()) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Surface(
+                                        color = if (result.hasReleaseSigningConfig) Color(0xFF132B1E) else Color(0xFF2C2210),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = if (result.hasReleaseSigningConfig) Icons.Default.VerifiedUser else Icons.Default.Info,
+                                                contentDescription = null,
+                                                tint = if (result.hasReleaseSigningConfig) CndnEmerald else CndnAmber,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = result.signingMessage,
+                                                color = if (result.hasReleaseSigningConfig) CndnEmerald else CndnAmber,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    }
+                                }
 
                                 // Gradle Wrapper Missing Alert & Auto-Fix
                                 if (!result.hasGradleWrapper) {
@@ -507,53 +540,75 @@ fun BuildWizardScreen(
                 }
             }
 
-            // STEP 3: Build Target
+            // STEP 3: Build Target (Tek Hedef: İmzalı Release APK)
             item {
                 Spacer(modifier = Modifier.height(24.dp))
                 SectionTitle(number = "3", title = "Derleme Hedefi")
                 Spacer(modifier = Modifier.height(8.dp))
 
-                BuildTarget.entries.forEach { target ->
-                    val isSelected = selectedTarget == target
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (isSelected) CndnSurfaceVariant else CndnSurface
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            if (isSelected) CndnCyan else CndnBorder
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .clickable { selectedTarget = target }
-                    ) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = CndnSurfaceVariant),
+                    shape = RoundedCornerShape(14.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.5.dp, CndnCyan),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
                         Row(
-                            modifier = Modifier.padding(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            RadioButton(
-                                selected = isSelected,
-                                onClick = { selectedTarget = target },
-                                colors = RadioButtonDefaults.colors(selectedColor = CndnCyan)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
-                                Text(
-                                    text = target.displayName,
-                                    color = CndnTextPrimary,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.VerifiedUser,
+                                    contentDescription = null,
+                                    tint = CndnEmerald,
+                                    modifier = Modifier.size(24.dp)
                                 )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "İmzalı Release APK",
+                                        color = CndnTextPrimary,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp
+                                    )
+                                    Text(
+                                        text = "Tek Hedefli Akıllı İmzalı Sistem",
+                                        color = CndnCyan,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                            Surface(
+                                color = Color(0xFF132B1E),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
                                 Text(
-                                    text = "Gradle Görevi: ./${target.gradleCommand} • Çıktı: ${target.artifactName}",
-                                    color = CndnTextMuted,
+                                    text = "Otomatik İmzalı",
+                                    color = CndnEmerald,
                                     fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "Gradle Görevi: ./assembleRelease • Çıktı: cndn-apk-release.apk",
+                            color = CndnTextMuted,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Release imzalama yapılandırması ve güvenli keystore otomatik olarak doğrulanıp tamamlanır. Cihazlara doğrudan kurulabilir ve mağaza dağıtımına uygundur.",
+                            color = CndnTextSecondary,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp
+                        )
                     }
                 }
             }
@@ -684,11 +739,11 @@ fun BuildWizardScreen(
                     if (isSubmitting || isBuildingInProgress) {
                         CircularProgressIndicator(color = Color(0xFF002026), modifier = Modifier.size(24.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("İşlem Yürütülüyor...", color = Color(0xFF002026), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("İmzalı APK Hazırlanıyor...", color = Color(0xFF002026), fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     } else {
-                        Icon(Icons.Default.CloudUpload, contentDescription = null, tint = Color(0xFF002026))
+                        Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = Color(0xFF002026))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Yükle ve Derlemeyi Başlat", color = Color(0xFF002026), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("İMZALI APK OLUŞTUR", color = Color(0xFF002026), fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, letterSpacing = 0.5.sp)
                     }
                 }
             }

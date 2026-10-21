@@ -151,6 +151,9 @@ object ZipProjectAnalyzer {
         var foundAppId: String? = null
         var foundCompileSdk: String? = null
 
+        var foundVersionName: String? = null
+        var foundVersionCode: String? = null
+
         val rootCanonical = effectiveProjectDir.canonicalPath
         effectiveProjectDir.walkTopDown().forEach { file ->
             if (file.isFile) {
@@ -177,15 +180,19 @@ object ZipProjectAnalyzer {
                             detectedModules.add(modName)
                         }
                     }
-                    // Try parsing package/namespace from manifest
+                    // Try parsing package/namespace and version info from manifest
                     runCatching {
                         val text = file.readText()
                         val pkgMatch = Regex("package=[\"']([^\"']+)[\"']").find(text)
-                        if (pkgMatch != null) foundAppId = pkgMatch.groupValues[1]
+                        if (pkgMatch != null && foundAppId == null) foundAppId = pkgMatch.groupValues[1]
+                        val vNameMatch = Regex("android:versionName=[\"']([^\"']+)[\"']").find(text)
+                        if (vNameMatch != null && foundVersionName == null) foundVersionName = vNameMatch.groupValues[1]
+                        val vCodeMatch = Regex("android:versionCode=[\"']([^\"']+)[\"']").find(text)
+                        if (vCodeMatch != null && foundVersionCode == null) foundVersionCode = vCodeMatch.groupValues[1]
                     }
                 }
 
-                // Check build.gradle for compileSdk and namespace
+                // Check build.gradle for compileSdk, namespace, versionName, versionCode
                 if (file.name == "build.gradle" || file.name == "build.gradle.kts") {
                     runCatching {
                         val text = file.readText()
@@ -195,6 +202,10 @@ object ZipProjectAnalyzer {
                         if (nsMatch != null && foundAppId == null) foundAppId = nsMatch.groupValues[1]
                         val appIdMatch = Regex("applicationId\\s*[=]?\\s*[\"']([^\"']+)[\"']").find(text)
                         if (appIdMatch != null) foundAppId = appIdMatch.groupValues[1]
+                        val vnMatch = Regex("versionName\\s*[=]?\\s*[\"']([^\"']+)[\"']").find(text)
+                        if (vnMatch != null) foundVersionName = vnMatch.groupValues[1]
+                        val vcMatch = Regex("versionCode\\s*[=]?\\s*([0-9]+)").find(text)
+                        if (vcMatch != null) foundVersionCode = vcMatch.groupValues[1]
                     }
                 }
 
@@ -216,6 +227,13 @@ object ZipProjectAnalyzer {
             "Bu ZIP geçerli bir Android projesi içermiyor. 'build.gradle(.kts)', 'settings.gradle(.kts)' veya 'AndroidManifest.xml' dosyaları bulunamadı."
         } else null
 
+        // Auto-complete and analyze signing configuration for valid Android projects
+        val signingInfo = if (isAndroid) {
+            ProjectSigningAutoCompleter.analyzeAndCompleteSigning(effectiveProjectDir)
+        } else {
+            null
+        }
+
         return ProjectInspectionResult(
             isValidAndroidProject = isAndroid,
             validationError = validationError,
@@ -230,7 +248,14 @@ object ZipProjectAnalyzer {
             detectedModules = detectedModules.ifEmpty { listOf("app") },
             appName = foundAppName ?: effectiveProjectDir.name,
             applicationId = foundAppId ?: "com.example.app",
+            versionName = foundVersionName ?: "1.0.0",
+            versionCode = foundVersionCode ?: "1",
             compileSdkVersion = foundCompileSdk ?: "34",
+            isKotlinDsl = signingInfo?.isKotlinDsl ?: false,
+            agpVersion = signingInfo?.agpVersion,
+            gradleVersion = signingInfo?.gradleVersion,
+            hasReleaseSigningConfig = signingInfo?.hasReleaseSigningConfig ?: false,
+            signingMessage = signingInfo?.message,
             containsSuspiciousPaths = false,
             filesList = filesList
         )

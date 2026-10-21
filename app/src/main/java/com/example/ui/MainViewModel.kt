@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.analyzer.ApkUtils
+import com.example.data.analyzer.ProjectSigningAutoCompleter
 import com.example.data.analyzer.ZipProjectAnalyzer
 import com.example.data.local.AppPreferences
 import com.example.data.local.BuildDatabase
@@ -226,8 +227,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             try {
                 _isBuildingInProgress.value = true
-                _buildActionProgress.value = "Dosyalar GitHub'a yükleniyor ve commit oluşturuluyor..."
+                _buildActionProgress.value = "Android projesi doğrulanıyor..."
+                delay(200)
 
+                _buildActionProgress.value = "İmzalama yapılandırması kontrol ediliyor..."
+                val signingRes = withContext(Dispatchers.IO) {
+                    ProjectSigningAutoCompleter.analyzeAndCompleteSigning(projectDir)
+                }
+                delay(300)
+
+                _buildActionProgress.value = "Release APK için dosyalar hazırlanıyor ve commit oluşturuluyor..."
                 val commitRes = githubRepo.commitProjectAndTriggerBuild(
                     projectDir = projectDir,
                     repoFullName = repoFullName,
@@ -243,7 +252,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 val commit = commitRes.getOrThrow()
-                _buildActionProgress.value = "GitHub Actions iş akışı (workflow_dispatch) tetikleniyor..."
+                _buildActionProgress.value = "Release APK derleniyor (GitHub Actions iş akışı tetikleniyor)..."
 
                 // Trigger workflow_dispatch strictly once
                 val dispatchRes = githubRepo.triggerWorkflowDispatch(
@@ -262,18 +271,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                _buildActionProgress.value = "GitHub Actions iş akışı bekleniyor..."
+                _buildActionProgress.value = "Release APK derlemesi başlatıldı, Actions iş akışı bekleniyor..."
 
-                // Insert initial build record
+                // Insert initial build record with complete project metadata
                 val initialBuild = BuildEntity(
                     repoFullName = repoFullName,
                     repoHtmlUrl = "https://github.com/$repoFullName",
                     branch = commit.branch,
                     commitSha = commit.commitSha,
-                    commitMessage = commitMessage.ifBlank { "CNDN Android Derlemesi" },
+                    commitMessage = commitMessage.ifBlank { "CNDN İmzalı Release APK Derlemesi" },
                     workflowRunId = 0L,
                     buildTarget = target.name,
                     status = BuildStatusState.QUEUED.name,
+                    appName = inspection.appName,
+                    packageName = inspection.applicationId,
+                    versionName = inspection.versionName,
+                    versionCode = inspection.versionCode,
+                    isSignatureVerified = false,
+                    signatureScheme = if (signingRes.hasReleaseSigningConfig) "Release İmzalı" else null,
                     createdAt = System.currentTimeMillis()
                 )
                 val buildId = buildDao.insertBuild(initialBuild)
@@ -434,12 +449,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             res.onSuccess { info ->
                 withContext(Dispatchers.IO) {
+                    val sigInfo = ApkUtils.verifyApkSignature(context, info.file)
+
                     buildDao.updateBuild(
                         build.copy(
                             isDownloaded = true,
                             localApkPath = info.file.absolutePath,
                             apkSha256 = info.sha256,
-                            artifactSize = info.fileSizeBytes
+                            artifactSize = info.fileSizeBytes,
+                            packageName = sigInfo.packageName ?: build.packageName,
+                            versionName = sigInfo.versionName ?: build.versionName,
+                            versionCode = sigInfo.versionCode?.toString() ?: build.versionCode,
+                            isSignatureVerified = sigInfo.isSigned,
+                            signatureScheme = sigInfo.scheme
                         )
                     )
 

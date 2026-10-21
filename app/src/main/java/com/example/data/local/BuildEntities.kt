@@ -25,7 +25,13 @@ data class BuildEntity(
     val artifactSize: Long? = null,
     val localApkPath: String? = null,
     val apkSha256: String? = null,
-    val isDownloaded: Boolean = false
+    val isDownloaded: Boolean = false,
+    val appName: String? = null,
+    val packageName: String? = null,
+    val versionName: String? = null,
+    val versionCode: String? = null,
+    val isSignatureVerified: Boolean = false,
+    val signatureScheme: String? = null
 )
 
 @Entity(tableName = "download_records")

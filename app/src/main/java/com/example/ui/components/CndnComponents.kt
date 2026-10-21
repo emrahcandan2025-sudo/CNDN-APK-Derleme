@@ -161,20 +161,31 @@ fun CndnBuildItemCard(
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Code,
+                        imageVector = Icons.Default.Android,
                         contentDescription = null,
                         tint = CndnCyan,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = build.repoFullName,
-                        color = CndnTextPrimary,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Column {
+                        Text(
+                            text = build.appName ?: build.repoFullName,
+                            color = CndnTextPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (!build.packageName.isNullOrBlank()) {
+                            Text(
+                                text = "${build.packageName}${if (!build.versionName.isNullOrBlank()) " • v${build.versionName}" else ""}",
+                                color = CndnTextSecondary,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 CndnStatusBadge(statusStr = build.status)
@@ -198,26 +209,43 @@ fun CndnBuildItemCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.ForkRight,
-                        contentDescription = null,
-                        tint = CndnTextMuted,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = build.branch,
-                        color = CndnTextMuted,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(
-                        text = build.buildTarget,
-                        color = CndnCyan,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    if (build.isSignatureVerified || build.signatureScheme != null) {
+                        Surface(
+                            color = Color(0xFF10281C),
+                            shape = RoundedCornerShape(4.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, CndnEmerald.copy(alpha = 0.5f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = CndnEmerald, modifier = Modifier.size(11.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("İmzalı", color = CndnEmerald, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+
+                    if (build.workflowRunId > 0) {
+                        Text(
+                            text = "#${build.workflowRunId}",
+                            color = CndnCyan,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+
+                    if (build.artifactSize != null && build.artifactSize > 0) {
+                        Text(
+                            text = com.example.data.analyzer.ApkUtils.formatFileSize(build.artifactSize),
+                            color = CndnTextMuted,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
                 }
 
                 Text(
