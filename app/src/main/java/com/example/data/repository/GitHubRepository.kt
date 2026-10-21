@@ -10,6 +10,7 @@ import com.example.data.api.GitHubApiService
 import com.example.data.local.AppPreferences
 import com.example.data.model.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.ResponseBody
 import java.io.File
@@ -192,9 +193,15 @@ class GitHubRepository(
             }
             val newTreeSha = treeResp.body()!!.sha
 
-            // 6. Create Git Commit
+            // 6. Create Git Commit with [skip ci] to strictly prevent any automatic push-triggered runs
+            val cleanMsg = commitMessage.ifBlank { "CNDN APK Derleme Merkezi: Proje güncellemesi" }.trim()
+            val finalMsg = if (cleanMsg.contains("[skip ci]", ignoreCase = true) || cleanMsg.contains("[ci skip]", ignoreCase = true)) {
+                cleanMsg
+            } else {
+                "$cleanMsg [skip ci]"
+            }
             val commitReq = CreateCommitRequest(
-                message = commitMessage.ifBlank { "CNDN APK Derleme Merkezi: Proje güncellemesi [ci skip: false]" },
+                message = finalMsg,
                 tree = newTreeSha,
                 parents = listOf(parentCommitSha)
             )
@@ -217,16 +224,97 @@ class GitHubRepository(
         }
     }
 
+    /**
+     * Explicitly triggers GitHub Actions workflow_dispatch exactly once for the build.
+     * Prevents duplicate runs by checking if a run already exists for the commit before dispatching.
+     */
+    suspend fun triggerWorkflowDispatch(
+        repoFullName: String,
+        branch: String,
+        buildTarget: BuildTarget,
+        commitSha: String,
+        workflowFileName: String = "cndn_android_build.yml"
+    ): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            val parts = repoFullName.split("/")
+            if (parts.size != 2) return@withContext Result.failure(IllegalArgumentException("Geçersiz depo adı formatı: $repoFullName"))
+            val owner = parts[0]
+            val repo = parts[1]
+
+            // 1. Safety check: Check if a workflow run already exists for this commit before dispatching
+            val preCheck = findWorkflowRunForCommit(repoFullName, commitSha, workflowFileName)
+            if (preCheck.isSuccess && preCheck.getOrNull() != null) {
+                return@withContext Result.success(true)
+            }
+
+            val dispatchReq = WorkflowDispatchRequest(
+                ref = branch,
+                inputs = mapOf(
+                    "build_target" to buildTarget.gradleCommand,
+                    "java_version" to "17"
+                )
+            )
+
+            var lastError = ""
+            for (attempt in 1..3) {
+                val response = api.createWorkflowDispatch(getAuthHeader(), owner, repo, workflowFileName, dispatchReq)
+                if (response.isSuccessful) {
+                    return@withContext Result.success(true)
+                } else {
+                    lastError = "(${response.code()}) ${response.errorBody()?.string() ?: response.message()}"
+                    // Check if run already exists despite error
+                    val retryCheck = findWorkflowRunForCommit(repoFullName, commitSha, workflowFileName)
+                    if (retryCheck.isSuccess && retryCheck.getOrNull() != null) {
+                        return@withContext Result.success(true)
+                    }
+                    if (attempt < 3) {
+                        delay(1200L * attempt)
+                    }
+                }
+            }
+
+            Result.failure(Exception("İş akışı başlatılamadı: $lastError"))
+        } catch (e: Exception) {
+            val excCheck = findWorkflowRunForCommit(repoFullName, commitSha, workflowFileName)
+            if (excCheck.isSuccess && excCheck.getOrNull() != null) {
+                Result.success(true)
+            } else {
+                Result.failure(e)
+            }
+        }
+    }
+
     suspend fun findWorkflowRunForCommit(
         repoFullName: String,
-        commitSha: String
+        commitSha: String,
+        workflowFileName: String = "cndn_android_build.yml"
     ): Result<GitHubWorkflowRun?> = withContext(Dispatchers.IO) {
         try {
             val parts = repoFullName.split("/")
-            val response = api.getWorkflowRuns(getAuthHeader(), parts[0], parts[1])
+            if (parts.size != 2) return@withContext Result.failure(IllegalArgumentException("Geçersiz depo adı formatı: $repoFullName"))
+            val owner = parts[0]
+            val repo = parts[1]
+
+            // Try workflow-specific run endpoint first
+            val wfResp = try {
+                api.getWorkflowRunsForWorkflow(getAuthHeader(), owner, repo, workflowFileName, headSha = commitSha)
+            } catch (e: Exception) {
+                null
+            }
+
+            if (wfResp != null && wfResp.isSuccessful && wfResp.body() != null) {
+                val runs = wfResp.body()!!.workflowRuns
+                val match = runs.find { it.headSha == commitSha }
+                if (match != null) {
+                    return@withContext Result.success(match)
+                }
+            }
+
+            // Fallback to general runs matching this commitSha
+            val response = api.getWorkflowRuns(getAuthHeader(), owner, repo, headSha = commitSha)
             if (response.isSuccessful && response.body() != null) {
                 val runs = response.body()!!.workflowRuns
-                val match = runs.find { it.headSha == commitSha } ?: runs.firstOrNull()
+                val match = runs.find { it.headSha == commitSha }
                 Result.success(match)
             } else {
                 Result.failure(Exception("Workflow run listesi alınamadı: ${response.message()}"))

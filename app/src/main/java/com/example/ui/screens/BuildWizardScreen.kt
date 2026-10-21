@@ -67,6 +67,8 @@ fun BuildWizardScreen(
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
+    val isBuildingInProgress by viewModel.isBuildingInProgress.collectAsState()
+    var lastClickTime by remember { mutableLongStateOf(0L) }
 
     val zipPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -601,10 +603,17 @@ fun BuildWizardScreen(
                 val isReady = inspectionResult?.isValidAndroidProject == true &&
                         connectionState is ConnectionState.Connected &&
                         !isSubmitting &&
+                        !isBuildingInProgress &&
                         (selectedTab == 1 || selectedRepo != null)
 
                 Button(
                     onClick = {
+                        val currentTime = System.currentTimeMillis()
+                        if (currentTime - lastClickTime < 1500L) return@Button
+                        lastClickTime = currentTime
+
+                        if (isSubmitting || isBuildingInProgress) return@Button
+
                         errorMessage = null
                         isSubmitting = true
 
@@ -672,8 +681,10 @@ fun BuildWizardScreen(
                         .height(54.dp)
                         .testTag("submit_build_btn")
                 ) {
-                    if (isSubmitting) {
+                    if (isSubmitting || isBuildingInProgress) {
                         CircularProgressIndicator(color = Color(0xFF002026), modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("İşlem Yürütülüyor...", color = Color(0xFF002026), fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     } else {
                         Icon(Icons.Default.CloudUpload, contentDescription = null, tint = Color(0xFF002026))
                         Spacer(modifier = Modifier.width(8.dp))

@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -89,6 +90,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Current build state & action progress
     private val _buildActionProgress = MutableStateFlow<String?>(null)
     val buildActionProgress: StateFlow<String?> = _buildActionProgress.asStateFlow()
+
+    private val _isBuildingInProgress = MutableStateFlow(false)
+    val isBuildingInProgress: StateFlow<Boolean> = _isBuildingInProgress.asStateFlow()
+
+    private val buildLock = Mutex()
+    private var lastBuildClickTimestamp = 0L
 
     private val _downloadingBuildId = MutableStateFlow<Long?>(null)
     val downloadingBuildId: StateFlow<Long?> = _downloadingBuildId.asStateFlow()
@@ -193,6 +200,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onCreated: (Long) -> Unit,
         onError: (String) -> Unit
     ) {
+        val now = System.currentTimeMillis()
+        if (now - lastBuildClickTimestamp < 1500L) {
+            // Rapid double click debounce
+            return
+        }
+        lastBuildClickTimestamp = now
+
+        if (_isBuildingInProgress.value) {
+            // Build already in progress
+            return
+        }
+
         val inspection = _inspectionResult.value
         val projectDir = inspection?.rootProjectDir
         if (projectDir == null || !projectDir.exists()) {
@@ -201,43 +220,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch {
-            _buildActionProgress.value = "Dosyalar GitHub'a yükleniyor ve commit oluşturuluyor..."
-
-            val commitRes = githubRepo.commitProjectAndTriggerBuild(
-                projectDir = projectDir,
-                repoFullName = repoFullName,
-                branch = branch,
-                buildTarget = target,
-                commitMessage = commitMessage
-            )
-
-            if (commitRes.isFailure) {
-                _buildActionProgress.value = null
-                onError(commitRes.exceptionOrNull()?.message ?: "Yükleme başarısız.")
+            if (!buildLock.tryLock()) {
+                // Another build action is actively locking
                 return@launch
             }
+            try {
+                _isBuildingInProgress.value = true
+                _buildActionProgress.value = "Dosyalar GitHub'a yükleniyor ve commit oluşturuluyor..."
 
-            val commit = commitRes.getOrThrow()
-            _buildActionProgress.value = "GitHub Actions iş akışı bekleniyor..."
+                val commitRes = githubRepo.commitProjectAndTriggerBuild(
+                    projectDir = projectDir,
+                    repoFullName = repoFullName,
+                    branch = branch,
+                    buildTarget = target,
+                    commitMessage = commitMessage
+                )
 
-            // Insert initial build record
-            val initialBuild = BuildEntity(
-                repoFullName = repoFullName,
-                repoHtmlUrl = "https://github.com/$repoFullName",
-                branch = commit.branch,
-                commitSha = commit.commitSha,
-                commitMessage = commitMessage.ifBlank { "CNDN Android Derlemesi" },
-                workflowRunId = 0L,
-                buildTarget = target.name,
-                status = BuildStatusState.QUEUED.name,
-                createdAt = System.currentTimeMillis()
-            )
-            val buildId = buildDao.insertBuild(initialBuild)
-            _buildActionProgress.value = null
-            onCreated(buildId)
+                if (commitRes.isFailure) {
+                    _buildActionProgress.value = null
+                    onError(commitRes.exceptionOrNull()?.message ?: "Yükleme başarısız.")
+                    return@launch
+                }
 
-            // Start background polling
-            startPollingRun(buildId, repoFullName, commit.commitSha)
+                val commit = commitRes.getOrThrow()
+                _buildActionProgress.value = "GitHub Actions iş akışı (workflow_dispatch) tetikleniyor..."
+
+                // Trigger workflow_dispatch strictly once
+                val dispatchRes = githubRepo.triggerWorkflowDispatch(
+                    repoFullName = repoFullName,
+                    branch = commit.branch,
+                    buildTarget = target,
+                    commitSha = commit.commitSha
+                )
+
+                if (dispatchRes.isFailure) {
+                    val runCheck = githubRepo.findWorkflowRunForCommit(repoFullName, commit.commitSha)
+                    if (runCheck.isFailure || runCheck.getOrNull() == null) {
+                        _buildActionProgress.value = null
+                        onError(dispatchRes.exceptionOrNull()?.message ?: "GitHub Actions iş akışı tetiklenemedi.")
+                        return@launch
+                    }
+                }
+
+                _buildActionProgress.value = "GitHub Actions iş akışı bekleniyor..."
+
+                // Insert initial build record
+                val initialBuild = BuildEntity(
+                    repoFullName = repoFullName,
+                    repoHtmlUrl = "https://github.com/$repoFullName",
+                    branch = commit.branch,
+                    commitSha = commit.commitSha,
+                    commitMessage = commitMessage.ifBlank { "CNDN Android Derlemesi" },
+                    workflowRunId = 0L,
+                    buildTarget = target.name,
+                    status = BuildStatusState.QUEUED.name,
+                    createdAt = System.currentTimeMillis()
+                )
+                val buildId = buildDao.insertBuild(initialBuild)
+                _buildActionProgress.value = null
+                onCreated(buildId)
+
+                // Start background polling
+                startPollingRun(buildId, repoFullName, commit.commitSha)
+            } finally {
+                _isBuildingInProgress.value = false
+                buildLock.unlock()
+            }
         }
     }
 

@@ -116,6 +116,12 @@ data class UpdateRefRequest(
 )
 
 @JsonClass(generateAdapter = true)
+data class WorkflowDispatchRequest(
+    val ref: String,
+    val inputs: Map<String, String> = emptyMap()
+)
+
+@JsonClass(generateAdapter = true)
 data class WorkflowRunsResponse(
     @Json(name = "total_count") val totalCount: Int,
     @Json(name = "workflow_runs") val workflowRuns: List<GitHubWorkflowRun>

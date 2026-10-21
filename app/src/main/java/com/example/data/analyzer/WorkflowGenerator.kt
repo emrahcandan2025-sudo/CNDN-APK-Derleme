@@ -21,19 +21,25 @@ object WorkflowGenerator {
             name: CNDN Android APK Derleme
 
             on:
-              push:
-                branches: [ main, master, 'cndn/**', 'release/**' ]
               workflow_dispatch:
                 inputs:
                   build_target:
                     description: 'Derleme Hedefi'
                     required: true
-                    default: '${target.name}'
+                    default: '${target.gradleCommand}'
                     type: choice
                     options:
-                      - DEBUG_APK
-                      - RELEASE_APK
-                      - BUNDLE_AAB
+                      - assembleDebug
+                      - assembleRelease
+                      - bundleRelease
+                  java_version:
+                    description: 'Java JDK Sürümü'
+                    required: true
+                    default: '$javaVersion'
+                    type: choice
+                    options:
+                      - '17'
+                      - '21'
 
             concurrency:
               group: cndn-build-${'$'}{{ github.ref }}
@@ -92,7 +98,8 @@ object WorkflowGenerator {
                   - name: Android Projesini Derle (${target.gradleCommand})
                     id: gradle_build
                     run: |
-                      ./gradlew ${target.gradleCommand} -Djava.awt.headless=true --stacktrace --no-daemon
+                      TARGET="${'$'}{{ inputs.build_target || '${target.gradleCommand}' }}"
+                      ./gradlew ${'$'}TARGET -Djava.awt.headless=true --stacktrace --no-daemon
 
                   - name: Derleme Çıktısını Kontrol Et
                     if: success()

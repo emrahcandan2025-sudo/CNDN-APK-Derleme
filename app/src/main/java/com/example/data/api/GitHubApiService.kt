@@ -89,12 +89,32 @@ interface GitHubApiService {
         @Body request: Map<String, Any?>
     ): Response<ResponseBody>
 
+    @POST("repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches")
+    suspend fun createWorkflowDispatch(
+        @Header("Authorization") authHeader: String,
+        @Path("owner") owner: String,
+        @Path("repo") repo: String,
+        @Path("workflow_id") workflowId: String,
+        @Body request: WorkflowDispatchRequest
+    ): Response<ResponseBody>
+
+    @GET("repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs")
+    suspend fun getWorkflowRunsForWorkflow(
+        @Header("Authorization") authHeader: String,
+        @Path("owner") owner: String,
+        @Path("repo") repo: String,
+        @Path("workflow_id") workflowId: String,
+        @Query("per_page") perPage: Int = 15,
+        @Query("head_sha") headSha: String? = null
+    ): Response<WorkflowRunsResponse>
+
     @GET("repos/{owner}/{repo}/actions/runs")
     suspend fun getWorkflowRuns(
         @Header("Authorization") authHeader: String,
         @Path("owner") owner: String,
         @Path("repo") repo: String,
-        @Query("per_page") perPage: Int = 15
+        @Query("per_page") perPage: Int = 15,
+        @Query("head_sha") headSha: String? = null
     ): Response<WorkflowRunsResponse>
 
     @GET("repos/{owner}/{repo}/actions/runs/{run_id}")

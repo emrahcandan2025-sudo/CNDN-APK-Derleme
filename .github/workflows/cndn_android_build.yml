@@ -1,8 +1,6 @@
 name: CNDN Android APK & AAB Derleme
 
 on:
-  push:
-    branches: [ main, master, 'cndn/**', 'release/**' ]
   workflow_dispatch:
     inputs:
       build_target:
