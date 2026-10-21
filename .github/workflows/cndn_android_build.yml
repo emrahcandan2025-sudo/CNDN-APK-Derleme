@@ -1,25 +1,19 @@
-name: CNDN Android APK & AAB Derleme
+name: CNDN Android APK Derleme
 
 on:
+  push:
+    branches: [ main, master, 'cndn/**', 'release/**' ]
   workflow_dispatch:
     inputs:
       build_target:
         description: 'Derleme Hedefi'
         required: true
-        default: 'assembleDebug'
+        default: 'DEBUG_APK'
         type: choice
         options:
-          - assembleDebug
-          - assembleRelease
-          - bundleRelease
-      java_version:
-        description: 'Java JDK Sürümü'
-        required: true
-        default: '17'
-        type: choice
-        options:
-          - '17'
-          - '21'
+          - DEBUG_APK
+          - RELEASE_APK
+          - BUNDLE_AAB
 
 concurrency:
   group: cndn-build-${{ github.ref }}
@@ -27,41 +21,38 @@ concurrency:
 
 jobs:
   build:
-    name: CNDN Android Derleme
+    name: Android Derleme (assembleDebug)
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 30
 
     steps:
-      - name: Kaynak Kodunu İndir (Checkout)
+      - name: Depo Kodunu Çek (Checkout)
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Java JDK ${{ inputs.java_version || '17' }} Kurulumu
+      - name: Java JDK 17 Kurulumu
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: ${{ inputs.java_version || '17' }}
+          java-version: '17'
           cache: 'gradle'
 
-      - name: Gradle Wrapper İzinlerini ve Sürümünü Ayarla
+      - name: Gradle Wrapper Yetkilendirmesi ve Sürüm Uyumu
         run: |
           if [ -f "gradlew" ]; then
             chmod +x gradlew
           else
-            echo "UYARI: gradlew bulunamadı, fallback Gradle Wrapper oluşturuluyor..."
+            echo "gradlew bulunamadı, fallback gradle wrapper oluşturuluyor"
             gradle wrapper --gradle-version 9.3.1 || true
             chmod +x gradlew || true
           fi
           WRAPPER_PROP="gradle/wrapper/gradle-wrapper.properties"
           if [ -f "$WRAPPER_PROP" ]; then
-            echo "Mevcut wrapper yapılandırması:"
-            cat "$WRAPPER_PROP"
             if grep -rq "9\.1\." gradle/libs.versions.toml app/build.gradle* build.gradle* 2>/dev/null; then
               echo "AGP 9.x tespit edildi. Gradle sürümü 9.3.1 olarak ayarlanıyor..."
               sed -i 's/gradle-[0-8]\.[0-9.]*-bin\.zip/gradle-9.3.1-bin.zip/g' "$WRAPPER_PROP" || true
               sed -i 's/gradle-9\.[0-2]\.[0-9.]*-bin\.zip/gradle-9.3.1-bin.zip/g' "$WRAPPER_PROP" || true
-              cat "$WRAPPER_PROP"
             fi
           fi
 
@@ -78,43 +69,22 @@ jobs:
           fi
           ls -la debug.keystore || true
 
-      - name: Android Projesini Derle (${{ inputs.build_target || 'assembleDebug' }})
+      - name: Android Projesini Derle (assembleDebug)
         id: gradle_build
         run: |
-          TARGET="${{ inputs.build_target || 'assembleDebug' }}"
-          echo "Başlatılan Gradle görevi: ./gradlew $TARGET"
-          ./gradlew $TARGET -Djava.awt.headless=true --stacktrace --no-daemon
+          ./gradlew assembleDebug -Djava.awt.headless=true --stacktrace --no-daemon
 
-      - name: Derleme Çıktılarını Kontrol Et
+      - name: Derleme Çıktısını Kontrol Et
         if: success()
         run: |
-          echo "=== Derlenen APK / AAB Dosyaları ==="
-          ls -la app/build/outputs/apk/*/*.apk 2>/dev/null || true
-          ls -la app/build/outputs/bundle/*/*.aab 2>/dev/null || true
+          echo "=== Oluşan Çıktılar ==="
+          ls -la app/build/outputs/apk/* 2>/dev/null || ls -la app/build/outputs/bundle/* 2>/dev/null || true
 
-      - name: Debug APK Artefaktını Yükle
-        if: success() && (inputs.build_target == 'assembleDebug' || inputs.build_target == '' || !inputs.build_target)
+      - name: APK / AAB Artefaktını Yükle
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: cndn-apk-debug
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
-          if-no-files-found: warn
-
-      - name: Release APK Artefaktını Yükle
-        if: success() && inputs.build_target == 'assembleRelease'
-        uses: actions/upload-artifact@v4
-        with:
-          name: cndn-apk-release
-          path: app/build/outputs/apk/release/*.apk
-          retention-days: 14
-          if-no-files-found: warn
-
-      - name: App Bundle (AAB) Artefaktını Yükle
-        if: success() && inputs.build_target == 'bundleRelease'
-        uses: actions/upload-artifact@v4
-        with:
-          name: cndn-aab-release
-          path: app/build/outputs/bundle/release/*.aab
-          retention-days: 14
-          if-no-files-found: warn
+          if-no-files-found: error
