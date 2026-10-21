@@ -274,49 +274,136 @@ class GitHubRepository(
         repoFullName: String,
         artifactId: Long,
         destDir: File,
-        baseName: String
+        baseName: String,
+        onProgress: (Int, String) -> Unit = { _, _ -> }
     ): Result<DownloadedApkInfo> = withContext(Dispatchers.IO) {
+        val tempDownloadFile = File(destDir, "raw_download_${System.currentTimeMillis()}_${artifactId}.tmp")
+        val tempApkFile = File(destDir, "extracted_${System.currentTimeMillis()}_${artifactId}.apk")
         try {
             val parts = repoFullName.split("/")
+            if (parts.size != 2) {
+                return@withContext Result.failure(IllegalArgumentException("Geçersiz depo adı formatı: $repoFullName"))
+            }
+
+            onProgress(-1, "GitHub artefakt bağlantısı kuruluyor...")
             val response = api.downloadArtifactZip(getAuthHeader(), parts[0], parts[1], artifactId)
             if (!response.isSuccessful || response.body() == null) {
-                return@withContext Result.failure(Exception("Artefakt indirilemedi (${response.code()}): ${response.message()}"))
+                val errorMsg = when (response.code()) {
+                    401 -> "GitHub Yetki Hatası (401): Personal Access Token geçersiz veya süresi dolmuş."
+                    403 -> "Erişim Reddedildi (403): GitHub API indirme izni yetersiz ('repo' ve 'actions:read' yetkileri gereklidir) veya istek sınırı aşıldı."
+                    404 -> "Artefakt Bulunamadı (404): GitHub Actions artefaktı henüz hazır değil veya sunucudan silinmiş."
+                    410 -> "Artefakt Süresi Dolmuş (410): GitHub bu derleme çıktısını saklama süresi (retention) dolduğu için kaldırmış."
+                    else -> "Artefakt indirilemedi: HTTP ${response.code()} - ${response.message()}"
+                }
+                return@withContext Result.failure(Exception(errorMsg))
             }
 
             destDir.mkdirs()
-            var extractedApkFile: File? = null
+            val body = response.body()!!
+            val totalBytes = body.contentLength()
+            var downloadedBytes = 0L
 
-            // GitHub artifacts are zipped archives containing the APK or AAB
-            response.body()!!.byteStream().use { stream ->
-                val zis = ZipInputStream(stream)
-                var entry = zis.nextEntry
-                while (entry != null) {
-                    val name = entry.name
-                    if (name.endsWith(".apk") || name.endsWith(".aab")) {
-                        val targetApk = File(destDir, name.substringAfterLast("/"))
-                        FileOutputStream(targetApk).use { fos ->
-                            zis.copyTo(fos)
+            onProgress(0, "İndirme başlatıldı...")
+
+            // 1. Stream response body safely to temporary download file with chunked buffering
+            body.byteStream().use { input ->
+                FileOutputStream(tempDownloadFile).use { output ->
+                    val buffer = ByteArray(16384)
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        kotlinx.coroutines.yield()
+                        output.write(buffer, 0, read)
+                        downloadedBytes += read
+                        if (totalBytes > 0) {
+                            val percent = ((downloadedBytes * 100) / totalBytes).toInt().coerceIn(0, 100)
+                            onProgress(percent, "İndiriliyor: %$percent (${ApkUtils.formatFileSize(downloadedBytes)})")
+                        } else {
+                            onProgress(-1, "İndiriliyor: ${ApkUtils.formatFileSize(downloadedBytes)}")
                         }
-                        extractedApkFile = targetApk
-                        break
                     }
-                    entry = zis.nextEntry
+                    output.flush()
                 }
             }
 
-            val apkFile = extractedApkFile ?: return@withContext Result.failure(Exception("Artefakt arşivinde APK veya AAB dosyası bulunamadı."))
-            val sha256 = ApkUtils.calculateSha256(apkFile)
+            if (!tempDownloadFile.exists() || tempDownloadFile.length() < 100L) {
+                return@withContext Result.failure(Exception("İndirilen artefakt dosyası boş veya eksik."))
+            }
+
+            onProgress(100, "Artefakt içeriği doğrulanıyor...")
+
+            var extractedApkName: String? = null
+
+            // 2. Try extracting APK from the ZIP package
+            try {
+                java.util.zip.ZipFile(tempDownloadFile).use { zip ->
+                    val apkEntry = zip.entries().asSequence().find { entry ->
+                        !entry.isDirectory && (entry.name.endsWith(".apk", ignoreCase = true) || entry.name.endsWith(".aab", ignoreCase = true))
+                    }
+                    if (apkEntry != null) {
+                        extractedApkName = apkEntry.name.substringAfterLast("/")
+                        zip.getInputStream(apkEntry).use { zipIn ->
+                            FileOutputStream(tempApkFile).use { apkOut ->
+                                zipIn.copyTo(apkOut)
+                                apkOut.flush()
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Not a multi-entry ZIP or directly an APK
+            }
+
+            // 3. Fallback: if not extracted from ZIP, check if downloaded file itself is a valid APK
+            if (extractedApkName == null || !tempApkFile.exists() || tempApkFile.length() == 0L) {
+                val directCheck = ApkUtils.validateApk(tempDownloadFile)
+                if (directCheck.isSuccess) {
+                    tempDownloadFile.copyTo(tempApkFile, overwrite = true)
+                    extractedApkName = if (baseName.endsWith(".apk", ignoreCase = true) || baseName.endsWith(".aab", ignoreCase = true)) {
+                        baseName
+                    } else {
+                        "$baseName.apk"
+                    }
+                } else {
+                    return@withContext Result.failure(Exception("İndirilen artefakt içerisinde geçerli bir APK veya AAB dosyası bulunamadı."))
+                }
+            }
+
+            // 4. Validate the extracted APK file integrity
+            val validation = ApkUtils.validateApk(tempApkFile)
+            if (validation.isFailure) {
+                return@withContext Result.failure(validation.exceptionOrNull() ?: Exception("İndirilen APK dosyası doğrulanamadı."))
+            }
+
+            // 5. Safely move to final file
+            val rawName = (extractedApkName ?: "$baseName.apk").replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            val finalName = if (rawName.endsWith(".apk", ignoreCase = true) || rawName.endsWith(".aab", ignoreCase = true)) {
+                rawName
+            } else {
+                "$rawName.apk"
+            }
+
+            val finalFile = File(destDir, finalName)
+            if (finalFile.exists()) {
+                finalFile.delete()
+            }
+            tempApkFile.copyTo(finalFile, overwrite = true)
+
+            val sha256 = ApkUtils.calculateSha256(finalFile)
 
             Result.success(
                 DownloadedApkInfo(
-                    file = apkFile,
-                    fileName = apkFile.name,
-                    fileSizeBytes = apkFile.length(),
+                    file = finalFile,
+                    fileName = finalFile.name,
+                    fileSizeBytes = finalFile.length(),
                     sha256 = sha256
                 )
             )
         } catch (e: Exception) {
-            Result.failure(e)
+            val sanitizedMsg = BuildLogAnalyzer.sanitizeLogs(e.localizedMessage ?: "İndirme sırasında ağ hatası oluştu.")
+            Result.failure(Exception(sanitizedMsg))
+        } finally {
+            if (tempDownloadFile.exists()) tempDownloadFile.delete()
+            if (tempApkFile.exists()) tempApkFile.delete()
         }
     }
 

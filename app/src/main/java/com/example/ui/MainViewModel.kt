@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 sealed interface ConnectionState {
@@ -32,6 +33,13 @@ sealed interface ConnectionState {
     data object Connecting : ConnectionState
     data class Connected(val user: GitHubUser) : ConnectionState
     data class Error(val message: String) : ConnectionState
+}
+
+sealed interface DownloadUiState {
+    data object Idle : DownloadUiState
+    data class Downloading(val buildId: Long, val progressPercent: Int = -1, val statusMessage: String = "İndiriliyor...") : DownloadUiState
+    data class Success(val buildId: Long, val file: File, val fileName: String, val sha256: String) : DownloadUiState
+    data class Error(val buildId: Long, val errorMessage: String) : DownloadUiState
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -84,6 +92,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _downloadingBuildId = MutableStateFlow<Long?>(null)
     val downloadingBuildId: StateFlow<Long?> = _downloadingBuildId.asStateFlow()
+
+    private val _downloadUiState = MutableStateFlow<DownloadUiState>(DownloadUiState.Idle)
+    val downloadUiState: StateFlow<DownloadUiState> = _downloadUiState.asStateFlow()
 
     private val pollingJobs = mutableMapOf<Long, Job>()
 
@@ -331,54 +342,110 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun downloadApk(context: android.content.Context, buildId: Long, onDone: (File) -> Unit, onError: (String) -> Unit) {
-        viewModelScope.launch(Dispatchers.IO) {
+    fun downloadApk(
+        context: android.content.Context,
+        buildId: Long,
+        onDone: (File) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
             _downloadingBuildId.value = buildId
-            val build = buildDao.getBuildById(buildId)
+            _downloadUiState.value = DownloadUiState.Downloading(buildId, -1, "Artefakt aranıyor...")
+
+            val build = withContext(Dispatchers.IO) { buildDao.getBuildById(buildId) }
             if (build == null || build.artifactId == null) {
                 _downloadingBuildId.value = null
-                onError("İndirilecek artefakt bulunamadı.")
+                val err = "İndirilecek artefakt bulunamadı."
+                _downloadUiState.value = DownloadUiState.Error(buildId, err)
+                withContext(Dispatchers.Main) {
+                    onError(err)
+                }
                 return@launch
             }
 
             val apkDir = File(context.filesDir, "apks")
             apkDir.mkdirs()
 
-            val res = githubRepo.downloadAndExtractApk(
-                repoFullName = build.repoFullName,
-                artifactId = build.artifactId,
-                destDir = apkDir,
-                baseName = build.artifactName ?: "cndn_app"
-            )
+            _downloadUiState.value = DownloadUiState.Downloading(buildId, 0, "İndirme başlatılıyor...")
+
+            val res = withContext(Dispatchers.IO) {
+                githubRepo.downloadAndExtractApk(
+                    repoFullName = build.repoFullName,
+                    artifactId = build.artifactId,
+                    destDir = apkDir,
+                    baseName = build.artifactName ?: "cndn_app",
+                    onProgress = { percent, msg ->
+                        viewModelScope.launch(Dispatchers.Main) {
+                            _downloadUiState.value = DownloadUiState.Downloading(buildId, percent, msg)
+                        }
+                    }
+                )
+            }
 
             _downloadingBuildId.value = null
 
             res.onSuccess { info ->
-                buildDao.updateBuild(
-                    build.copy(
-                        isDownloaded = true,
-                        localApkPath = info.file.absolutePath,
-                        apkSha256 = info.sha256,
-                        artifactSize = info.fileSizeBytes
+                withContext(Dispatchers.IO) {
+                    buildDao.updateBuild(
+                        build.copy(
+                            isDownloaded = true,
+                            localApkPath = info.file.absolutePath,
+                            apkSha256 = info.sha256,
+                            artifactSize = info.fileSizeBytes
+                        )
                     )
+
+                    buildDao.insertDownload(
+                        DownloadRecordEntity(
+                            buildId = build.id,
+                            fileName = info.fileName,
+                            filePath = info.file.absolutePath,
+                            fileSizeBytes = info.fileSizeBytes,
+                            sha256 = info.sha256,
+                            targetType = build.buildTarget
+                        )
+                    )
+                }
+
+                _downloadUiState.value = DownloadUiState.Success(
+                    buildId = build.id,
+                    file = info.file,
+                    fileName = info.fileName,
+                    sha256 = info.sha256
                 )
 
-                buildDao.insertDownload(
-                    DownloadRecordEntity(
-                        buildId = build.id,
-                        fileName = info.fileName,
-                        filePath = info.file.absolutePath,
-                        fileSizeBytes = info.fileSizeBytes,
-                        sha256 = info.sha256,
-                        targetType = build.buildTarget
-                    )
-                )
-
-                onDone(info.file)
+                // Execute callback strictly on Main dispatcher to prevent thread/Looper crashes
+                withContext(Dispatchers.Main) {
+                    onDone(info.file)
+                }
             }.onFailure { err ->
-                onError(err.message ?: "APK indirilirken bir hata oluştu.")
+                val errorMsg = err.message ?: "APK indirilirken bir hata oluştu."
+                _downloadUiState.value = DownloadUiState.Error(buildId, errorMsg)
+
+                // Execute callback strictly on Main dispatcher to prevent thread/Looper crashes
+                withContext(Dispatchers.Main) {
+                    onError(errorMsg)
+                }
             }
         }
+    }
+
+    fun markApkMissing(buildId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val build = buildDao.getBuildById(buildId)
+            if (build != null) {
+                buildDao.updateBuild(
+                    build.copy(
+                        isDownloaded = false,
+                        localApkPath = null
+                    )
+                )
+            }
+        }
+    }
+
+    fun clearDownloadState() {
+        _downloadUiState.value = DownloadUiState.Idle
     }
 
     fun deleteDownload(id: Long, filePath: String?) {

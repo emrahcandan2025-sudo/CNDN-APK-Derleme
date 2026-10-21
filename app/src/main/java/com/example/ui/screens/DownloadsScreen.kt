@@ -42,6 +42,7 @@ fun DownloadsScreen(
 ) {
     val context = LocalContext.current
     val allDownloads by viewModel.allDownloads.collectAsState()
+    var showUnknownSourcesDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -94,36 +95,43 @@ fun DownloadsScreen(
             contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp)
         ) {
             items(allDownloads, key = { it.id }) { record ->
+                val file = File(record.filePath)
+                val fileExists = file.exists() && file.isFile && file.length() > 0
+
                 DownloadItemCard(
                     record = record,
+                    fileExists = fileExists,
                     onInstall = {
-                        val file = File(record.filePath)
-                        if (file.exists()) {
-                            runCatching {
-                                val intent = ApkUtils.createInstallIntent(context, file)
-                                context.startActivity(intent)
-                            }.onFailure {
-                                Toast.makeText(context, "Paket yükleyici başlatılamadı", Toast.LENGTH_SHORT).show()
-                            }
+                        if (!file.exists() || file.length() == 0L) {
+                            Toast.makeText(context, "APK dosyası cihazda bulunamadı (silinmiş olabilir).", Toast.LENGTH_LONG).show()
+                            return@DownloadItemCard
+                        }
+
+                        if (!ApkUtils.canRequestPackageInstalls(context)) {
+                            showUnknownSourcesDialog = true
                         } else {
-                            Toast.makeText(context, "Dosya bulunamadı", Toast.LENGTH_SHORT).show()
+                            val installRes = ApkUtils.launchInstallApk(context, file)
+                            installRes.onSuccess {
+                                Toast.makeText(context, "Paket yükleyici açıldı", Toast.LENGTH_SHORT).show()
+                            }.onFailure { err ->
+                                Toast.makeText(context, "Kurulum başlatılamadı: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
+                            }
                         }
                     },
                     onShare = {
-                        val file = File(record.filePath)
-                        if (file.exists()) {
-                            runCatching {
-                                val intent = ApkUtils.createShareIntent(context, file)
-                                context.startActivity(intent)
-                            }.onFailure {
-                                Toast.makeText(context, "Paylaşım başarısız", Toast.LENGTH_SHORT).show()
-                            }
+                        if (!file.exists() || file.length() == 0L) {
+                            Toast.makeText(context, "Paylaşılacak dosya bulunamadı.", Toast.LENGTH_SHORT).show()
+                            return@DownloadItemCard
+                        }
+                        val shareRes = ApkUtils.launchShareApk(context, file)
+                        shareRes.onFailure {
+                            Toast.makeText(context, "Paylaşım açılamadı: ${it.localizedMessage}", Toast.LENGTH_SHORT).show()
                         }
                     },
                     onCopySha = {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("SHA256", record.sha256))
-                        Toast.makeText(context, "SHA-256 kopyalandı", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "SHA-256 panoya kopyalandı", Toast.LENGTH_SHORT).show()
                     },
                     onDelete = {
                         viewModel.deleteDownload(record.id, record.filePath)
@@ -133,12 +141,56 @@ fun DownloadsScreen(
                 Spacer(modifier = Modifier.height(10.dp))
             }
         }
+
+        if (showUnknownSourcesDialog) {
+            AlertDialog(
+                onDismissRequest = { showUnknownSourcesDialog = false },
+                title = {
+                    Text(
+                        text = "Uygulama Yükleme İzni Gerekli",
+                        color = CndnTextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Android güvenlik kuralları gereği, derlenen APK'yı telefona kurabilmek için bu uygulamaya 'Bilinmeyen uygulamaları yükle' izni verilmelidir.\n\nLütfen açılacak sistem ayarlarından bu izni etkinleştirin.",
+                        color = CndnTextSecondary,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showUnknownSourcesDialog = false
+                            try {
+                                context.startActivity(ApkUtils.createUnknownSourcesSettingsIntent(context))
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Ayarlar açılamadı: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CndnCyan)
+                    ) {
+                        Text("Ayarları Aç", color = Color(0xFF002026), fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showUnknownSourcesDialog = false }) {
+                        Text("İptal", color = CndnTextSecondary)
+                    }
+                },
+                containerColor = CndnSurface,
+                shape = RoundedCornerShape(16.dp)
+            )
+        }
     }
 }
 
 @Composable
 private fun DownloadItemCard(
     record: DownloadRecordEntity,
+    fileExists: Boolean,
     onInstall: () -> Unit,
     onShare: () -> Unit,
     onCopySha: () -> Unit,
@@ -166,10 +218,15 @@ private fun DownloadItemCard(
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(CndnEmerald.copy(alpha = 0.15f)),
+                            .background(if (fileExists) CndnEmerald.copy(alpha = 0.15f) else CndnCrimson.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Android, contentDescription = null, tint = CndnEmerald, modifier = Modifier.size(20.dp))
+                        Icon(
+                            imageVector = if (fileExists) Icons.Default.Android else Icons.Default.FilePresent,
+                            contentDescription = null,
+                            tint = if (fileExists) CndnEmerald else CndnCrimson,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
@@ -180,8 +237,12 @@ private fun DownloadItemCard(
                             fontSize = 14.sp
                         )
                         Text(
-                            text = "${ApkUtils.formatFileSize(record.fileSizeBytes)} • $dateStr",
-                            color = CndnTextSecondary,
+                            text = if (fileExists) {
+                                "${ApkUtils.formatFileSize(record.fileSizeBytes)} • $dateStr"
+                            } else {
+                                "Dosya silinmiş • $dateStr"
+                            },
+                            color = if (fileExists) CndnTextSecondary else CndnCrimson,
                             fontSize = 11.sp
                         )
                     }
@@ -218,6 +279,7 @@ private fun DownloadItemCard(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = onInstall,
+                    enabled = fileExists,
                     colors = ButtonDefaults.buttonColors(containerColor = CndnCyan),
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.weight(1f).height(42.dp)
@@ -229,6 +291,7 @@ private fun DownloadItemCard(
 
                 OutlinedButton(
                     onClick = onShare,
+                    enabled = fileExists,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = CndnTextPrimary),
                     shape = RoundedCornerShape(10.dp),
                     border = androidx.compose.foundation.BorderStroke(1.dp, CndnBorder),

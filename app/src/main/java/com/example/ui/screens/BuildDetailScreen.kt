@@ -50,9 +50,12 @@ fun BuildDetailScreen(
     val context = LocalContext.current
     val allBuilds by viewModel.allBuilds.collectAsState()
     val downloadingId by viewModel.downloadingBuildId.collectAsState()
+    val downloadUiState by viewModel.downloadUiState.collectAsState()
+
+    var showUnknownSourcesDialog by remember { mutableStateOf(false) }
 
     val build = allBuilds.find { it.id == buildId }
-    val isDownloading = downloadingId == buildId
+    val isDownloading = downloadingId == buildId || (downloadUiState is com.example.ui.DownloadUiState.Downloading && (downloadUiState as com.example.ui.DownloadUiState.Downloading).buildId == buildId)
 
     val status = runCatching {
         BuildStatusState.valueOf(build?.status ?: "QUEUED")
@@ -209,8 +212,119 @@ fun BuildDetailScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            // Action buttons: Download or Install / Share
-                            if (!build.isDownloaded || build.localApkPath.isNullOrBlank() || !File(build.localApkPath).exists()) {
+                            // Download / Error / Install Actions
+                            val currentDownload = downloadUiState
+                            val isThisDownloading = currentDownload is com.example.ui.DownloadUiState.Downloading && currentDownload.buildId == build.id
+                            val isThisError = currentDownload is com.example.ui.DownloadUiState.Error && currentDownload.buildId == build.id
+                            val localFileAvailable = ApkUtils.isFileAvailable(build.localApkPath)
+
+                            // 1. Error Banner with Retry button if download failed
+                            if (isThisError) {
+                                val errorMsg = (currentDownload as com.example.ui.DownloadUiState.Error).errorMessage
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2E1317)),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, CndnCrimson.copy(alpha = 0.5f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = CndnCrimson, modifier = Modifier.size(18.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("İndirme Başarısız Oldu", color = CndnCrimson, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(text = errorMsg, color = CndnTextSecondary, fontSize = 12.sp)
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Button(
+                                            onClick = {
+                                                viewModel.downloadApk(
+                                                    context = context,
+                                                    buildId = build.id,
+                                                    onDone = { apkFile ->
+                                                        Toast.makeText(context, "APK başarıyla indirildi: ${apkFile.name}", Toast.LENGTH_LONG).show()
+                                                    },
+                                                    onError = { err ->
+                                                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                                                    }
+                                                )
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = CndnCrimson),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.height(36.dp)
+                                        ) {
+                                            Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("Yeniden Dene", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+
+                            // 2. Active Download Progress
+                            if (isThisDownloading) {
+                                val downloadData = currentDownload as com.example.ui.DownloadUiState.Downloading
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = CndnSurfaceVariant),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, CndnCyan.copy(alpha = 0.4f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(14.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text("APK İndiriliyor...", color = CndnCyan, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            if (downloadData.progressPercent >= 0) {
+                                                Text("%${downloadData.progressPercent}", color = CndnCyan, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        if (downloadData.progressPercent >= 0) {
+                                            LinearProgressIndicator(
+                                                progress = { downloadData.progressPercent / 100f },
+                                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                                                color = CndnCyan,
+                                                trackColor = CndnSurface
+                                            )
+                                        } else {
+                                            LinearProgressIndicator(
+                                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                                                color = CndnCyan,
+                                                trackColor = CndnSurface
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Text(text = downloadData.statusMessage, color = CndnTextSecondary, fontSize = 11.sp)
+                                    }
+                                }
+                            } else if (!build.isDownloaded || !localFileAvailable) {
+                                // 3. Not yet downloaded or previously downloaded file was deleted from disk
+                                if (build.isDownloaded && !localFileAvailable) {
+                                    Surface(
+                                        color = Color(0xFF261D12),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Default.Warning, contentDescription = null, tint = CndnAmber, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Önceden indirilen dosya cihazda bulunamadı. Yeniden indirebilirsiniz.",
+                                                color = CndnAmber,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                }
+
                                 Button(
                                     onClick = {
                                         viewModel.downloadApk(
@@ -232,30 +346,39 @@ fun BuildDetailScreen(
                                         .height(52.dp)
                                         .testTag("download_apk_btn")
                                 ) {
-                                    if (isDownloading) {
-                                        CircularProgressIndicator(color = Color(0xFF00210B), modifier = Modifier.size(22.dp))
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text("APK İndiriliyor...", color = Color(0xFF00210B), fontWeight = FontWeight.Bold)
-                                    } else {
-                                        Icon(Icons.Default.Download, contentDescription = null, tint = Color(0xFF00210B))
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text("APK'yı Telefona İndir", color = Color(0xFF00210B), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                    }
+                                    Icon(Icons.Default.Download, contentDescription = null, tint = Color(0xFF00210B))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = if (build.isDownloaded) "APK'yı Yeniden İndir" else "APK'yı Telefona İndir",
+                                        color = Color(0xFF00210B),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
                                 }
                             } else {
-                                // Already downloaded: Install & Share
-                                val apkFile = File(build.localApkPath)
+                                // 4. Already downloaded and verified on disk: Install & Share
+                                val apkFile = File(build.localApkPath!!)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Button(
                                         onClick = {
-                                            runCatching {
-                                                val intent = ApkUtils.createInstallIntent(context, apkFile)
-                                                context.startActivity(intent)
-                                            }.onFailure {
-                                                Toast.makeText(context, "Paket yükleyici açılamadı: ${it.localizedMessage}", Toast.LENGTH_SHORT).show()
+                                            if (!apkFile.exists() || apkFile.length() == 0L) {
+                                                Toast.makeText(context, "APK dosyası bulunamadı. Lütfen tekrar indirin.", Toast.LENGTH_LONG).show()
+                                                viewModel.markApkMissing(build.id)
+                                                return@Button
+                                            }
+
+                                            if (!ApkUtils.canRequestPackageInstalls(context)) {
+                                                showUnknownSourcesDialog = true
+                                            } else {
+                                                val installRes = ApkUtils.launchInstallApk(context, apkFile)
+                                                installRes.onSuccess {
+                                                    Toast.makeText(context, "Paket yükleyici açıldı", Toast.LENGTH_SHORT).show()
+                                                }.onFailure { err ->
+                                                    Toast.makeText(context, "Kurulum başlatılamadı: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
+                                                }
                                             }
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = CndnCyan),
@@ -272,11 +395,9 @@ fun BuildDetailScreen(
 
                                     OutlinedButton(
                                         onClick = {
-                                            runCatching {
-                                                val intent = ApkUtils.createShareIntent(context, apkFile)
-                                                context.startActivity(intent)
-                                            }.onFailure {
-                                                Toast.makeText(context, "Paylaşım açılamadı", Toast.LENGTH_SHORT).show()
+                                            val shareRes = ApkUtils.launchShareApk(context, apkFile)
+                                            shareRes.onFailure {
+                                                Toast.makeText(context, "Paylaşım açılamadı: ${it.localizedMessage}", Toast.LENGTH_SHORT).show()
                                             }
                                         },
                                         colors = ButtonDefaults.outlinedButtonColors(contentColor = CndnTextPrimary),
@@ -493,6 +614,49 @@ fun BuildDetailScreen(
                     }
                 }
             }
+        }
+
+        if (showUnknownSourcesDialog) {
+            AlertDialog(
+                onDismissRequest = { showUnknownSourcesDialog = false },
+                title = {
+                    Text(
+                        text = "Uygulama Yükleme İzni Gerekli",
+                        color = CndnTextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Android güvenlik kuralları gereği, derlenen APK'yı bu telefona kurabilmek için CNDN APK Derleme Merkezi'ne 'Bilinmeyen uygulamaları yükle' izni verilmelidir.\n\nLütfen açılacak sistem ayarlarından bu izni etkinleştirin.",
+                        color = CndnTextSecondary,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showUnknownSourcesDialog = false
+                            try {
+                                context.startActivity(ApkUtils.createUnknownSourcesSettingsIntent(context))
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Ayarlar açılamadı: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CndnCyan)
+                    ) {
+                        Text("Ayarları Aç", color = Color(0xFF002026), fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showUnknownSourcesDialog = false }) {
+                        Text("İptal", color = CndnTextSecondary)
+                    }
+                },
+                containerColor = CndnSurface,
+                shape = RoundedCornerShape(16.dp)
+            )
         }
     }
 }

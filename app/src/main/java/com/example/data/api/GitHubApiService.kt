@@ -144,20 +144,28 @@ object GitHubApiClient {
     private const val BASE_URL = "https://api.github.com/"
 
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.HEADERS // Avoid logging full bodies with tokens
+        level = HttpLoggingInterceptor.Level.HEADERS
+        redactHeader("Authorization")
     }
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
         .addInterceptor { chain ->
-            val request = chain.request().newBuilder()
-                .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .header("User-Agent", "CNDN-Build-Center-Android")
-                .build()
-            chain.proceed(request)
+            val original = chain.request()
+            val host = original.url.host
+            val builder = original.newBuilder()
+            // Only add GitHub specific API headers when communicating with GitHub servers!
+            // When redirected to Azure Blob Storage / AWS S3, adding these headers causes 400 Bad Request or 403 Forbidden!
+            if (host.endsWith("github.com") || host == "api.github.com") {
+                builder.header("Accept", "application/vnd.github+json")
+                builder.header("X-GitHub-Api-Version", "2022-11-28")
+            }
+            builder.header("User-Agent", "CNDN-Build-Center-Android")
+            chain.proceed(builder.build())
         }
         .addInterceptor(loggingInterceptor)
         .build()
